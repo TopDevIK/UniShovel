@@ -7,4 +7,4 @@ const v2PairContract = (address) => {
     return new web3.eth.Contract(ABI_UNISWAP_V2_PAIR, address);
 };
 
-module.exports = { v2PairContract };
+module.exports = { v2PairContract, web3 };
