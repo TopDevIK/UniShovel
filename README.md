@@ -36,7 +36,16 @@ npm i
 node index
 ```
 
-## Customizations
+## How to Use
+
+### Configuring environmental variables at file `.env`. Example:
+
+```sh
+DB_URI="mongodb+srv://kuinka:---------@cluster0.9kyrn.mongodb.net/testDB"
+RPC_URL="https://bsc-dataseed.binance.org/"
+BSCSCAN_API_KEY="KR81----4QU2QK1H----CVX8Z578N-----"
+BITQUERY_API_KEY_ARRAY="BQY----------auK7AAR6A---------- BQY6----------yHo7P-------------"
+```
 
 `UniShovel` has several features built-in with scripts.
 
