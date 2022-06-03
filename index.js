@@ -4,10 +4,11 @@ const KConsole = require("./helper/KConsole");
 const { web3, v2PairContract } = require("./helper/web3_contract");
 const fetch = require("node-fetch");
 
-const BATCH_COUNT = 1;
 // ENV VARIABLES
-BSCSCAN_API_KEY = process.env.BSCSCAN_API_KEY;
-BITQUERY_API_KEY = process.env.BITQUERY_API_KEY;
+const BSCSCAN_API_KEY = process.env.BSCSCAN_API_KEY;
+const BITQUERY_API_KEY_ARRAY = process.env.BITQUERY_API_KEY_ARRAY.split(" ");
+const BATCH_COUNT = BITQUERY_API_KEY_ARRAY.length / 2;
+let CURRENT_API_KEY_ARRAY = [];
 
 // Connection URL
 const url = process.env.DB_URI;
@@ -61,9 +62,14 @@ const getBlockNumberByTimeStamp = async (timeStamp) => {
     process.exit();
 };
 
-const getBlockNumberByTimeStampGraphQL = async (timeStamp) => {
-    const query = JSON.stringify({
-        query: `
+const getBlockNumberByTimeStampGraphQL = async (timeStamp, index) => {
+    const BITQUERY_API_KEY = CURRENT_API_KEY_ARRAY.at(parseInt(index));
+    let text;
+    let i = 0;
+    while (i < 5)
+        try {
+            const query = JSON.stringify({
+                query: `
         query getBlockNumberByTimeStampGraphQL($after: ISO8601DateTime!, $before: ISO8601DateTime!){
             ethereum(network: bsc) {
               blocks(time: {after: $after, before: $before}, options: {limit: 1}) {
@@ -77,22 +83,38 @@ const getBlockNumberByTimeStampGraphQL = async (timeStamp) => {
             }
         }
         `,
-        variables: {
-            after: new Date(timeStamp * 1000).toISOString(),
-            before: new Date((timeStamp + 60) * 1000).toISOString(),
-        },
-    });
-    const response = await fetch("https://graphql.bitquery.io/", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "X-API-KEY": BITQUERY_API_KEY,
-        },
-        body: query,
-    });
-    const data = await response.json();
-    const blocks = data.data.ethereum.blocks;
-    if (blocks.length > 0) return blocks[0].height;
+                variables: {
+                    after: new Date(timeStamp * 1000).toISOString(),
+                    before: new Date((timeStamp + 60) * 1000).toISOString(),
+                },
+            });
+            const response = await fetch("https://graphql.bitquery.io/", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-API-KEY": BITQUERY_API_KEY,
+                },
+                body: query,
+            });
+            // return text;
+            text = await response.text();
+            // KConsole.red(text);
+            const data = JSON.parse(text);
+            // process.exit();
+            const blocks = data.data.ethereum.blocks;
+            if (blocks.length > 0) return blocks[0].height;
+            else return undefined;
+        } catch (error) {
+            console.log(
+                timeStamp,
+                `bitquery graphql error with timesamp :try again ${i} times in 10s,`,
+                error
+            );
+            KConsole.red(text);
+            await new Promise((resolve) => setTimeout(resolve, 10000));
+            i++;
+        }
+    process.exit();
 };
 const getPriceDuringPeriodWeb3js = async (fromBlock, toBlock) => {
     let logs = await web3.eth.getPastLogs({
@@ -106,11 +128,11 @@ const getPriceDuringPeriodWeb3js = async (fromBlock, toBlock) => {
     if (logs.length === 0) return undefined;
     const item = logs[0];
     amount0In = parseInt("0x" + item.data.slice(2, 66));
-    amount0Out = parseInt("0x" + item.data.slice(66, 130));
-    amount1In = parseInt("0x" + item.data.slice(130, 194));
+    amount0Out = parseInt("0x" + item.data.slice(130, 194));
+    amount1In = parseInt("0x" + item.data.slice(66, 130));
     amount1Out = parseInt("0x" + item.data.slice(194));
 
-    usdPrice = (amount0In + amount0Out) / (amount1In + amount1Out);
+    usdPrice = (amount1In + amount1Out) / (amount0In + amount0Out);
 
     return usdPrice;
 };
@@ -145,12 +167,14 @@ const getPriceDuringPeriod = async (fromBlock, toBlock) => {
     process.exit();
 };
 
-const getCoinPriceAt = async (timeStamp) => {
+const getCoinPriceAt = async (timeStamp, index) => {
     try {
         const [fromBlock, toBlock] = await Promise.all([
-            getBlockNumberByTimeStampGraphQL(timeStamp),
-            getBlockNumberByTimeStampGraphQL(timeStamp + interval),
+            getBlockNumberByTimeStampGraphQL(timeStamp, index),
+            getBlockNumberByTimeStampGraphQL(timeStamp + interval, index),
         ]);
+        if (fromBlock === undefined || toBlock === undefined) return;
+        console.log(fromBlock, toBlock);
         let usdPrice = await getPriceDuringPeriodWeb3js(fromBlock, toBlock);
 
         const updateDBItem = {
@@ -191,6 +215,7 @@ async function main() {
     fromTimeStamp = fromTimeStamp - (fromTimeStamp % interval);
     toTimeStamp = toTimeStamp - (toTimeStamp % interval);
     KConsole.cyan(`from ${fromTimeStamp} to ${toTimeStamp}`);
+    let API_KEY_USING = 0;
     for (
         let interator = toTimeStamp;
         interator >= fromTimeStamp;
@@ -205,8 +230,16 @@ async function main() {
         KConsole.cyan(
             `processing ${timeStampArr.at(0)} ~ ${timeStampArr.at(-1)}`
         );
+        CURRENT_API_KEY_ARRAY = BITQUERY_API_KEY_ARRAY.slice(
+            API_KEY_USING * BATCH_COUNT,
+            API_KEY_USING * BATCH_COUNT + BATCH_COUNT
+        );
+        // console.log(CURRENT_API_KEY_ARRAY);
+        API_KEY_USING = 1 - API_KEY_USING;
         await Promise.all(
-            timeStampArr.map((timeStamp) => getCoinPriceAt(timeStamp))
+            timeStampArr.map((timeStamp, index) =>
+                getCoinPriceAt(timeStamp, index)
+            )
         );
         KConsole.magenta("Done!");
     }
